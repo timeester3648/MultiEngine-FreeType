@@ -11,19 +11,23 @@ project "FreeType"
 	includedirs {
 		"./src",
 
+		"%{IncludeDir.zlib}",
 		"%{IncludeDir.freetype}",
 		"%{IncludeDir.fidelityfX_cacao}",
 		"%{IncludeDir.general_includes}"
 	}
 
 	defines {
-		"FT2_BUILD_LIBRARY"
+		"FT2_BUILD_LIBRARY",
+		"FT_CONFIG_OPTION_SYSTEM_ZLIB"
 	}
 
  	filter "system:windows"
 		disablewarnings { "4244", "4267" }
 		defines { "_CRT_SECURE_NO_WARNINGS", "_CRT_NONSTDC_NO_DEPRECATE" }
 		files {
+			"./src/sdf/sdf.c",
+			"./src/svg/svg.c",
 			"./src/pfr/pfr.c",
 			"./src/bdf/bdf.c",
 			"./src/pcf/pcf.c",
