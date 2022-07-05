@@ -9,8 +9,9 @@ project "FreeType"
 	inlining "Auto"
 
 	includedirs {
-		"./src/include",
+		"./src",
 
+		"%{IncludeDir.freetype}",
 		"%{IncludeDir.fidelityfX_cacao}",
 		"%{IncludeDir.general_includes}"
 	}
@@ -20,6 +21,7 @@ project "FreeType"
 	}
 
  	filter "system:windows"
+		disablewarnings { "4244", "4267" }
 		defines { "_CRT_SECURE_NO_WARNINGS", "_CRT_NONSTDC_NO_DEPRECATE" }
 		files {
 			"./src/pfr/pfr.c",
@@ -51,7 +53,6 @@ project "FreeType"
 			"./src/base/ftglyph.c",
 			"./src/base/ftgxval.c",
 			"./src/base/ftinit.c",
-			"./src/base/ftlcdfil.c",
 			"./src/base/ftmm.c",
 			"./src/base/ftotval.c",
 			"./src/base/ftpatent.c",

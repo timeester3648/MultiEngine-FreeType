@@ -5,3 +5,9 @@ src/dlg/dlg.c
 subprojects/*
 !subprojects/*.wrap
 /tests/data/*
+
+# exclude project files
+**.sln
+**.vcxproj
+**.vcxproj.user
+**.vcxproj.filters
