@@ -353,15 +353,24 @@
   static void
   ft_var_load_avar( TT_Face  face )
   {
-    FT_Stream       stream = FT_FACE_STREAM( face );
-    FT_Memory       memory = stream->memory;
+    FT_Error   error;
+    FT_Stream  stream = FT_FACE_STREAM( face );
+    FT_Memory  memory = stream->memory;
+    FT_Int     i, j;
+
     GX_Blend        blend  = face->blend;
     GX_AVarSegment  segment;
-    FT_Error        error;
-    FT_Long         version;
-    FT_Long         axisCount;
-    FT_Int          i, j;
-    FT_ULong        table_len;
+    GX_AVarTable    table;
+
+    FT_Long   version;
+    FT_Long   axisCount;
+    FT_ULong  table_len;
+
+#ifndef TT_CONFIG_OPTION_NO_BORING_EXPANSION
+    FT_ULong  table_offset;
+    FT_ULong  store_offset;
+    FT_ULong  axisMap_offset;
+#endif
 
 
     FT_TRACE2(( "AVAR " ));
@@ -374,13 +383,21 @@
       return;
     }
 
+#ifndef TT_CONFIG_OPTION_NO_BORING_EXPANSION
+    table_offset = FT_STREAM_POS();
+#endif
+
     if ( FT_FRAME_ENTER( table_len ) )
       return;
 
     version   = FT_GET_LONG();
     axisCount = FT_GET_LONG();
 
-    if ( version != 0x00010000L )
+    if ( version != 0x00010000L
+#ifndef TT_CONFIG_OPTION_NO_BORING_EXPANSION
+         && version != 0x00020000L
+#endif
+       )
     {
       FT_TRACE2(( "bad table version\n" ));
       goto Exit;
@@ -396,10 +413,14 @@
       goto Exit;
     }
 
-    if ( FT_QNEW_ARRAY( blend->avar_segment, axisCount ) )
+    if ( FT_NEW( blend->avar_table ) )
+      goto Exit;
+    table = blend->avar_table;
+
+    if ( FT_QNEW_ARRAY( table->avar_segment, axisCount ) )
       goto Exit;
 
-    segment = &blend->avar_segment[0];
+    segment = &table->avar_segment[0];
     for ( i = 0; i < axisCount; i++, segment++ )
     {
       FT_TRACE5(( "  axis %d:\n", i ));
@@ -412,9 +433,9 @@
         /* it right now since loading the `avar' table is optional.   */
 
         for ( j = i - 1; j >= 0; j-- )
-          FT_FREE( blend->avar_segment[j].correspondence );
+          FT_FREE( table->avar_segment[j].correspondence );
 
-        FT_FREE( blend->avar_segment );
+        FT_FREE( table->avar_segment );
         goto Exit;
       }
 
@@ -432,6 +453,37 @@
 
       FT_TRACE5(( "\n" ));
     }
+
+#ifndef TT_CONFIG_OPTION_NO_BORING_EXPANSION
+    if ( version < 0x00020000L )
+      goto Exit;
+
+    axisMap_offset = FT_GET_ULONG();
+    store_offset   = FT_GET_ULONG();
+
+    if ( store_offset )
+    {
+      error = tt_var_load_item_variation_store(
+                face,
+                table_offset + store_offset,
+                &table->itemStore );
+      if ( error )
+        goto Exit;
+    }
+
+    if ( axisMap_offset )
+    {
+      error = tt_var_load_delta_set_index_mapping(
+                face,
+                table_offset + axisMap_offset,
+                &table->axisMap,
+                &table->itemStore,
+                table_len );
+      if ( error )
+        goto Exit;
+    }
+#endif
+
 
   Exit:
     FT_FRAME_EXIT();
@@ -480,16 +532,6 @@
     if ( !itemStore->dataCount )
     {
       FT_TRACE2(( "tt_var_load_item_variation_store: missing varData\n" ));
-      error = FT_THROW( Invalid_Table );
-      goto Exit;
-    }
-
-    /* new in OpenType 1.8.4: inner & outer index equal to 0xFFFF    */
-    /* has a special meaning (i.e., no variation data for this item) */
-    if ( itemStore->dataCount == 0xFFFFU )
-    {
-      FT_TRACE2(( "ft_var_load_item_variation_store:"
-                  " dataCount too large\n" ));
       error = FT_THROW( Invalid_Table );
       goto Exit;
     }
@@ -959,14 +1001,21 @@
 
     /* OpenType 1.8.4+: No variation data for this item
      *  as indices have special value 0xFFFF. */
-    if (outerIndex == 0xFFFF && innerIndex == 0xFFFF)
+    if ( outerIndex == 0xFFFF && innerIndex == 0xFFFF )
       return 0;
 
     /* See pseudo code from `Font Variations Overview' */
     /* in the OpenType specification.                  */
 
+    if ( outerIndex >= itemStore->dataCount )
+      return 0; /* Out of range. */
+
     varData  = &itemStore->varData[outerIndex];
-    deltaSet = &varData->deltaSet[varData->regionIdxCount * innerIndex];
+    deltaSet = FT_OFFSET( varData->deltaSet,
+                          varData->regionIdxCount * innerIndex );
+
+    if ( innerIndex >= varData->itemCount )
+      return 0; /* Out of range. */
 
     if ( FT_QNEW_ARRAY( scalars, varData->regionIdxCount ) )
       return 0;
@@ -1139,20 +1188,9 @@
     }
     else
     {
-      GX_ItemVarData  varData;
-
-
       /* no widthMap data */
       outerIndex = 0;
       innerIndex = gindex;
-
-      varData = &table->itemStore.varData[outerIndex];
-      if ( gindex >= varData->itemCount )
-      {
-        FT_TRACE2(( "gindex %d out of range\n", gindex ));
-        error = FT_THROW( Invalid_Argument );
-        goto Exit;
-      }
     }
 
     delta = tt_var_get_item_delta( face,
@@ -1353,7 +1391,7 @@
       return;
 
     value     = blend->mvar_table->values;
-    limit     = value + blend->mvar_table->valueCount;
+    limit     = FT_OFFSET( value, blend->mvar_table->valueCount );
     itemStore = &blend->mvar_table->itemStore;
 
     for ( ; value < limit; value++ )
@@ -1386,7 +1424,7 @@
     FT_TRACE2(( "loaded\n" ));
 
     value = blend->mvar_table->values;
-    limit = value + blend->mvar_table->valueCount;
+    limit = FT_OFFSET( value, blend->mvar_table->valueCount );
 
     /* save original values of the data MVAR is going to modify */
     for ( ; value < limit; value++ )
@@ -1451,7 +1489,7 @@
       return;
 
     value = blend->mvar_table->values;
-    limit = value + blend->mvar_table->valueCount;
+    limit = FT_OFFSET( value, blend->mvar_table->valueCount );
 
     for ( ; value < limit; value++ )
     {
@@ -1923,11 +1961,17 @@
                         FT_Fixed*  coords,
                         FT_Fixed*  normalized )
   {
+    FT_Error   error  = FT_Err_Ok;
+    FT_Memory  memory = face->root.memory;
+    FT_UInt    i, j;
+
     GX_Blend        blend;
     FT_MM_Var*      mmvar;
-    FT_UInt         i, j;
     FT_Var_Axis*    a;
     GX_AVarSegment  av;
+
+    FT_Fixed*  new_normalized;
+    FT_Fixed*  old_normalized;
 
 
     blend = face->blend;
@@ -1979,30 +2023,91 @@
     for ( ; i < mmvar->num_axis; i++ )
       normalized[i] = 0;
 
-    if ( blend->avar_segment )
+    if ( blend->avar_table )
     {
+      GX_AVarTable  table = blend->avar_table;
+
+
       FT_TRACE5(( "normalized design coordinates"
                   " before applying `avar' data:\n" ));
 
-      av = blend->avar_segment;
-      for ( i = 0; i < mmvar->num_axis; i++, av++ )
+      if ( table->avar_segment )
       {
-        for ( j = 1; j < (FT_UInt)av->pairCount; j++ )
-        {
-          if ( normalized[i] < av->correspondence[j].fromCoord )
-          {
-            FT_TRACE5(( "  %.5f\n", normalized[i] / 65536.0 ));
+        av = table->avar_segment;
 
-            normalized[i] =
-              FT_MulDiv( normalized[i] - av->correspondence[j - 1].fromCoord,
-                         av->correspondence[j].toCoord -
-                           av->correspondence[j - 1].toCoord,
-                         av->correspondence[j].fromCoord -
-                           av->correspondence[j - 1].fromCoord ) +
-              av->correspondence[j - 1].toCoord;
-            break;
+        for ( i = 0; i < mmvar->num_axis; i++, av++ )
+        {
+          for ( j = 1; j < (FT_UInt)av->pairCount; j++ )
+          {
+            if ( normalized[i] < av->correspondence[j].fromCoord )
+            {
+              FT_TRACE5(( "  %.5f\n", normalized[i] / 65536.0 ));
+
+              normalized[i] =
+                FT_MulDiv( normalized[i] - av->correspondence[j - 1].fromCoord,
+                           av->correspondence[j].toCoord -
+                             av->correspondence[j - 1].toCoord,
+                           av->correspondence[j].fromCoord -
+                             av->correspondence[j - 1].fromCoord ) +
+                av->correspondence[j - 1].toCoord;
+              break;
+            }
           }
         }
+      }
+
+      if ( table->itemStore.varData )
+      {
+        if ( FT_QNEW_ARRAY( new_normalized, mmvar->num_axis ) )
+          return;
+
+        /* Install our half-normalized coordinates for the next */
+        /* Item Variation Store to work with.                   */
+        old_normalized                = face->blend->normalizedcoords;
+        face->blend->normalizedcoords = normalized;
+
+        for ( i = 0; i < mmvar->num_axis; i++ )
+        {
+          FT_Fixed  v          = normalized[i];
+          FT_UInt   innerIndex = i;
+          FT_UInt   outerIndex = 0;
+          FT_Int    delta;
+
+
+          if ( table->axisMap.innerIndex )
+          {
+            FT_UInt  idx = i;
+
+
+            if ( idx >= table->axisMap.mapCount )
+              idx = table->axisMap.mapCount - 1;
+
+            outerIndex = table->axisMap.outerIndex[idx];
+            innerIndex = table->axisMap.innerIndex[idx];
+          }
+
+          delta = tt_var_get_item_delta( face,
+                                         &table->itemStore,
+                                         outerIndex,
+                                         innerIndex );
+
+	  v += delta << 2;
+
+	  /* Clamp value range. */
+	  v = v >=  0x10000L ?  0x10000 : v;
+	  v = v <= -0x10000L ? -0x10000 : v;
+
+          new_normalized[i] = v;
+        }
+
+        for ( i = 0; i < mmvar->num_axis; i++ )
+        {
+          normalized[i] = new_normalized[i];
+        }
+
+        face->blend->normalizedcoords = old_normalized;
+
+        FT_FREE( new_normalized );
       }
     }
   }
@@ -2040,9 +2145,9 @@
     for ( ; i < num_coords; i++ )
       design[i] = 0;
 
-    if ( blend->avar_segment )
+    if ( blend->avar_table && blend->avar_table->avar_segment )
     {
-      GX_AVarSegment  av = blend->avar_segment;
+      GX_AVarSegment  av = blend->avar_table->avar_segment;
 
 
       FT_TRACE5(( "design coordinates"
@@ -2207,6 +2312,11 @@
       FT_FRAME_END
     };
 
+    /* `num_instances` holds the number of all named instances including  */
+    /* the default instance, which might be missing in the table of named */
+    /* instances (in 'fvar').  This value is validated in `sfobjs.c` and  */
+    /* may be reset to 0 if consistency checks fail.                      */
+    num_instances = (FT_UInt)face->root.style_flags >> 16;
 
     /* read the font data and set up the internal representation */
     /* if not already done                                       */
@@ -2216,20 +2326,6 @@
     if ( need_init )
     {
       FT_TRACE2(( "FVAR " ));
-
-      /* both `fvar' and `gvar' must be present */
-      if ( FT_SET_ERROR( face->goto_table( face, TTAG_gvar,
-                                           stream, &table_len ) ) )
-      {
-        /* CFF2 is an alternate to gvar here */
-        if ( FT_SET_ERROR( face->goto_table( face, TTAG_CFF2,
-                                             stream, &table_len ) ) )
-        {
-          FT_TRACE1(( "\n" ));
-          FT_TRACE1(( "TT_Get_MM_Var: `gvar' or `CFF2' table is missing\n" ));
-          goto Exit;
-        }
-      }
 
       if ( FT_SET_ERROR( face->goto_table( face, TTAG_fvar,
                                            stream, &table_len ) ) )
@@ -2244,6 +2340,17 @@
       /* in function `sfnt_init_face'                               */
       if ( FT_STREAM_READ_FIELDS( fvar_fields, &fvar_head ) )
         goto Exit;
+
+      /* If `num_instances` is larger, synthetization of the default  */
+      /* instance is required.  If `num_instances` is smaller,        */
+      /* however, the value has been reset to 0 in `sfnt_init_face`   */
+      /* (in `sfobjs.c`); in this case we have underallocated `mmvar` */
+      /* structs.                                                     */
+      if ( num_instances < fvar_head.instanceCount )
+      {
+        error = FT_THROW( Invalid_Table );
+        goto Exit;
+      }
 
       usePsName = FT_BOOL( fvar_head.instanceSize ==
                            6 + 4 * fvar_head.axisCount );
@@ -2262,11 +2369,6 @@
     }
     else
       num_axes = face->blend->num_axis;
-
-    /* `num_instances' holds the number of all named instances, */
-    /* including the default instance which might be missing    */
-    /* in fvar's table of named instances                       */
-    num_instances = (FT_UInt)face->root.style_flags >> 16;
 
     /* prepare storage area for MM data; this cannot overflow   */
     /* 32-bit arithmetic because of the size limits used in the */
@@ -2673,8 +2775,16 @@
     FT_TRACE5(( "\n" ));
 
     if ( !face->is_cff2 && !blend->glyphoffsets )
-      if ( FT_SET_ERROR( ft_var_load_gvar( face ) ) )
+    {
+      /* While a missing 'gvar' table is acceptable, for example for */
+      /* fonts that only vary metrics information or 'COLR' v1       */
+      /* `PaintVar*` tables, an incorrect SFNT table offset or size  */
+      /* for 'gvar', or an inconsistent 'gvar' table is not.         */
+      error = ft_var_load_gvar( face );
+      if ( error != FT_Err_Table_Missing && error != FT_Err_Ok )
         goto Exit;
+      error = FT_Err_Ok;
+    }
 
     if ( !blend->coords )
     {
@@ -4384,11 +4494,22 @@
       FT_FREE( blend->normalized_stylecoords );
       FT_FREE( blend->mmvar );
 
-      if ( blend->avar_segment )
+      if ( blend->avar_table )
       {
-        for ( i = 0; i < num_axes; i++ )
-          FT_FREE( blend->avar_segment[i].correspondence );
-        FT_FREE( blend->avar_segment );
+        if ( blend->avar_table->avar_segment )
+        {
+          for ( i = 0; i < num_axes; i++ )
+            FT_FREE( blend->avar_table->avar_segment[i].correspondence );
+          FT_FREE( blend->avar_table->avar_segment );
+        }
+
+        tt_var_done_item_variation_store( face,
+                                          &blend->avar_table->itemStore );
+
+        tt_var_done_delta_set_index_map( face,
+                                         &blend->avar_table->axisMap );
+
+        FT_FREE( blend->avar_table );
       }
 
       if ( blend->hvar_table )

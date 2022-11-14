@@ -57,13 +57,22 @@
 #define LAYER_V1_LIST_NUM_LAYERS_SIZE     4U
 #define COLOR_STOP_SIZE                   6U
 #define LAYER_SIZE                        4U
-#define COLR_HEADER_SIZE                 14U
+/* https://docs.microsoft.com/en-us/typography/opentype/spec/colr#colr-header */
+/* 3 * uint16 + 2 * Offset32 */
+#define COLRV0_HEADER_SIZE               14U
+/* COLRV0_HEADER_SIZE + 5 * Offset32 */
+#define COLRV1_HEADER_SIZE               34U
 
 
 #define VARIABLE_COLRV1_ENABLED                                            \
           ( ((TT_Driver)FT_FACE_DRIVER( face ))->root.clazz ==             \
               &tt_driver_class                                          && \
             ((TT_Driver)FT_FACE_DRIVER( face ))->enable_variable_colrv1 )
+
+#define ENSURE_READ_BYTES( byte_size )                             \
+  if ( p < colr->paints_start_v1                                || \
+       p > (FT_Byte*)colr->table + colr->table_size - byte_size )  \
+    return 0;
 
 
   typedef enum  FT_PaintFormat_Internal_
@@ -191,7 +200,7 @@
     colr_offset_in_stream = FT_STREAM_POS();
 #endif
 
-    if ( table_size < COLR_HEADER_SIZE )
+    if ( table_size < COLRV0_HEADER_SIZE )
       goto InvalidTable;
 
     if ( FT_FRAME_EXTRACT( table_size, table ) )
@@ -225,9 +234,12 @@
 
     if ( colr->version == 1 )
     {
+      if ( table_size < COLRV1_HEADER_SIZE )
+        goto InvalidTable;
+
       base_glyphs_offset_v1 = FT_NEXT_ULONG( p );
 
-      if ( base_glyphs_offset_v1 >= table_size )
+      if ( base_glyphs_offset_v1 + 4 >= table_size )
         goto InvalidTable;
 
       p1                 = (FT_Byte*)( table + base_glyphs_offset_v1 );
@@ -247,6 +259,9 @@
 
       if ( layer_offset_v1 )
       {
+        if ( layer_offset_v1 + 4 >= table_size )
+          goto InvalidTable;
+
         p1            = (FT_Byte*)( table + layer_offset_v1 );
         num_layers_v1 = FT_PEEK_ULONG( p1 );
 
@@ -481,7 +496,9 @@
       iterator->p = colr->layers + offset;
     }
 
-    if ( iterator->layer >= iterator->num_layers )
+    if ( iterator->layer >= iterator->num_layers                     ||
+         iterator->p < colr->layers                                  ||
+         iterator->p >= ( (FT_Byte*)colr->table + colr->table_size ) )
       return 0;
 
     *aglyph_index = FT_NEXT_USHORT( iterator->p );
@@ -499,13 +516,16 @@
 
 
   static FT_Bool
-  read_color_line( FT_Byte*       color_line_p,
+  read_color_line( Colr*          colr,
+                   FT_Byte*       color_line_p,
                    FT_ColorLine*  colorline,
                    FT_Bool        read_variable )
   {
     FT_Byte*        p = color_line_p;
     FT_PaintExtend  paint_extend;
 
+
+    ENSURE_READ_BYTES( 3 );
 
     paint_extend = (FT_PaintExtend)FT_NEXT_BYTE( p );
     if ( paint_extend > FT_COLR_PAINT_EXTEND_REFLECT )
@@ -540,6 +560,10 @@
 
 
     if ( !child_table_pointer )
+      return 0;
+
+    if ( *p < colr->paints_start_v1                            ||
+         *p > (FT_Byte*)colr->table + colr->table_size - 1 - 3 )
       return 0;
 
     paint_offset = FT_NEXT_UOFF3( *p );
@@ -602,9 +626,8 @@
       }
       else
       {
-        /* TODO: Direct lookup case not implemented or tested yet. */
-        FT_ASSERT( 0 );
-        return 0;
+        outer_index = 0;
+        inner_index = loop_var_index;
       }
 
       deltas[i] = mm->get_item_delta( FT_FACE( face ), &colr->var_store,
@@ -639,8 +662,10 @@
     if ( !p || !colr || !colr->table )
       return 0;
 
-    if ( p < colr->paints_start_v1                         ||
-         p >= ( (FT_Byte*)colr->table + colr->table_size ) )
+    /* The last byte of the 'COLR' table is at 'size-1'; subtract 1 of    */
+    /* that to account for the expected format byte we are going to read. */
+    if ( p < colr->paints_start_v1                        ||
+         p > (FT_Byte*)colr->table + colr->table_size - 2 )
       return 0;
 
     apaint->format = (FT_PaintFormat)FT_NEXT_BYTE( p );
@@ -678,6 +703,7 @@
               (FT_PaintFormat_Internal)apaint->format ==
                   FT_COLR_PAINTFORMAT_INTERNAL_VAR_SOLID  )
     {
+      ENSURE_READ_BYTES( 4 );
       apaint->u.solid.color.palette_index = FT_NEXT_USHORT( p );
       apaint->u.solid.color.alpha         = FT_NEXT_SHORT( p );
 
@@ -686,6 +712,7 @@
                FT_COLR_PAINTFORMAT_INTERNAL_VAR_SOLID &&
            VARIABLE_COLRV1_ENABLED                    )
       {
+        ENSURE_READ_BYTES( 4 );
         var_index_base = FT_NEXT_ULONG( p );
 
         if ( !get_deltas_for_var_index_base( face, colr, var_index_base, 1,
@@ -703,6 +730,7 @@
 
     else if ( apaint->format == FT_COLR_PAINTFORMAT_COLR_GLYPH )
     {
+      ENSURE_READ_BYTES(2);
       apaint->u.colr_glyph.glyphID = FT_NEXT_USHORT( p );
 
       return 1;
@@ -723,15 +751,18 @@
            ( (FT_PaintFormat_Internal)apaint->format ==
              FT_COLR_PAINTFORMAT_INTERNAL_VAR_LINEAR_GRADIENT ) ) )
     {
-      if ( !read_color_line( child_table_p,
+      if ( !read_color_line( colr,
+                             child_table_p,
                              &apaint->u.linear_gradient.colorline,
                              do_read_var ) )
         return 0;
 
       /*
-       * In order to support variations expose these as FT_Fixed 16.16 values so
-       * that we can support fractional values after interpolation.
+       * In order to support variations expose these as FT_Fixed 16.16
+       * values so that we can support fractional values after
+       * interpolation.
        */
+      ENSURE_READ_BYTES( 12 );
       apaint->u.linear_gradient.p0.x = INT_TO_FIXED( FT_NEXT_SHORT( p ) );
       apaint->u.linear_gradient.p0.y = INT_TO_FIXED( FT_NEXT_SHORT( p ) );
       apaint->u.linear_gradient.p1.x = INT_TO_FIXED( FT_NEXT_SHORT( p ) );
@@ -742,6 +773,7 @@
 #ifdef TT_CONFIG_OPTION_GX_VAR_SUPPORT
       if ( do_read_var && VARIABLE_COLRV1_ENABLED )
       {
+        ENSURE_READ_BYTES( 4 );
         var_index_base = FT_NEXT_ULONG ( p );
 
         if ( !get_deltas_for_var_index_base( face, colr, var_index_base, 6,
@@ -770,15 +802,19 @@
       FT_Pos  tmp;
 
 
-      if ( !read_color_line( child_table_p,
+      if ( !read_color_line( colr,
+                             child_table_p,
                              &apaint->u.radial_gradient.colorline,
                              do_read_var ) )
         return 0;
+
 
       /* In the OpenType specification, `r0` and `r1` are defined as   */
       /* `UFWORD`.  Since FreeType doesn't have a corresponding 16.16  */
       /* format we convert to `FWORD` and replace negative values with */
       /* (32bit) `FT_INT_MAX`.                                         */
+
+      ENSURE_READ_BYTES( 12 );
 
       apaint->u.radial_gradient.c0.x = INT_TO_FIXED( FT_NEXT_SHORT( p ) );
       apaint->u.radial_gradient.c0.y = INT_TO_FIXED( FT_NEXT_SHORT( p ) );
@@ -795,6 +831,7 @@
 #ifdef TT_CONFIG_OPTION_GX_VAR_SUPPORT
       if ( do_read_var && VARIABLE_COLRV1_ENABLED )
       {
+        ENSURE_READ_BYTES( 4 );
         var_index_base = FT_NEXT_ULONG ( p );
 
         if ( !get_deltas_for_var_index_base( face, colr, var_index_base, 6,
@@ -824,10 +861,13 @@
                 ( (FT_PaintFormat_Internal)apaint->format ==
                   FT_COLR_PAINTFORMAT_INTERNAL_VAR_SWEEP_GRADIENT ) ) )
     {
-      if ( !read_color_line( child_table_p,
+      if ( !read_color_line( colr,
+                             child_table_p,
                              &apaint->u.sweep_gradient.colorline,
                              do_read_var) )
         return 0;
+
+      ENSURE_READ_BYTES( 8 );
 
       apaint->u.sweep_gradient.center.x =
           INT_TO_FIXED( FT_NEXT_SHORT( p ) );
@@ -842,6 +882,7 @@
 #ifdef TT_CONFIG_OPTION_GX_VAR_SUPPORT
       if ( do_read_var && VARIABLE_COLRV1_ENABLED )
       {
+        ENSURE_READ_BYTES( 4 );
         var_index_base = FT_NEXT_ULONG ( p );
 
         if ( !get_deltas_for_var_index_base( face, colr, var_index_base, 4,
@@ -865,6 +906,7 @@
 
     if ( apaint->format == FT_COLR_PAINTFORMAT_GLYPH )
     {
+      ENSURE_READ_BYTES( 2 );
       apaint->u.glyph.paint.p                     = child_table_p;
       apaint->u.glyph.paint.insert_root_transform = 0;
       apaint->u.glyph.glyphID                     = FT_NEXT_USHORT( p );
@@ -888,6 +930,7 @@
        * The following matrix coefficients are encoded as
        * OpenType 16.16 fixed-point values.
        */
+      ENSURE_READ_BYTES( 24 );
       apaint->u.transform.affine.xx = FT_NEXT_LONG( p );
       apaint->u.transform.affine.yx = FT_NEXT_LONG( p );
       apaint->u.transform.affine.xy = FT_NEXT_LONG( p );
@@ -900,6 +943,7 @@
              FT_COLR_PAINTFORMAT_INTERNAL_VAR_TRANSFORM &&
            VARIABLE_COLRV1_ENABLED                      )
       {
+        ENSURE_READ_BYTES( 4 );
         var_index_base = FT_NEXT_ULONG( p );
 
         if ( !get_deltas_for_var_index_base( face, colr, var_index_base, 6,
@@ -927,6 +971,7 @@
       apaint->u.translate.paint.p                     = child_table_p;
       apaint->u.translate.paint.insert_root_transform = 0;
 
+      ENSURE_READ_BYTES( 4 );
       apaint->u.translate.dx = INT_TO_FIXED( FT_NEXT_SHORT( p ) );
       apaint->u.translate.dy = INT_TO_FIXED( FT_NEXT_SHORT( p ) );
 
@@ -935,6 +980,7 @@
              FT_COLR_PAINTFORMAT_INTERNAL_VAR_TRANSLATE &&
            VARIABLE_COLRV1_ENABLED                      )
       {
+        ENSURE_READ_BYTES( 4 );
         var_index_base = FT_NEXT_ULONG( p );
 
         if ( !get_deltas_for_var_index_base( face, colr, var_index_base, 2,
@@ -959,6 +1005,7 @@
       apaint->u.scale.paint.insert_root_transform = 0;
 
       /* All scale paints get at least one scale value. */
+      ENSURE_READ_BYTES( 2 );
       apaint->u.scale.scale_x = F2DOT14_TO_FIXED( FT_NEXT_SHORT( p ) );
 
       /* Non-uniform ones read an extra y value. */
@@ -969,7 +1016,10 @@
              FT_COLR_PAINTFORMAT_INTERNAL_SCALE_CENTER     ||
            (FT_PaintFormat_Internal)apaint->format ==
              FT_COLR_PAINTFORMAT_INTERNAL_VAR_SCALE_CENTER )
+      {
+        ENSURE_READ_BYTES( 2 );
         apaint->u.scale.scale_y = F2DOT14_TO_FIXED( FT_NEXT_SHORT( p ) );
+      }
       else
         apaint->u.scale.scale_y = apaint->u.scale.scale_x;
 
@@ -984,6 +1034,7 @@
            (FT_PaintFormat_Internal)apaint->format ==
              FT_COLR_PAINTFORMAT_INTERNAL_VAR_SCALE_UNIFORM_CENTER )
       {
+        ENSURE_READ_BYTES( 4 );
         apaint->u.scale.center_x = INT_TO_FIXED( FT_NEXT_SHORT ( p ) );
         apaint->u.scale.center_y = INT_TO_FIXED( FT_NEXT_SHORT ( p ) );
       }
@@ -1006,6 +1057,7 @@
                FT_COLR_PAINTFORMAT_INTERNAL_VAR_SCALE_UNIFORM_CENTER ) &&
            VARIABLE_COLRV1_ENABLED                                     )
       {
+        ENSURE_READ_BYTES( 4 );
         var_index_base = FT_NEXT_ULONG( p );
 
         if ( (FT_PaintFormat_Internal)apaint->format ==
@@ -1076,6 +1128,7 @@
       apaint->u.rotate.paint.p                     = child_table_p;
       apaint->u.rotate.paint.insert_root_transform = 0;
 
+      ENSURE_READ_BYTES( 2 );
       apaint->u.rotate.angle = F2DOT14_TO_FIXED( FT_NEXT_SHORT( p ) );
 
       if ( (FT_PaintFormat_Internal)apaint->format ==
@@ -1083,6 +1136,7 @@
            (FT_PaintFormat_Internal)apaint->format ==
              FT_COLR_PAINTFORMAT_INTERNAL_VAR_ROTATE_CENTER )
       {
+        ENSURE_READ_BYTES( 4 );
         apaint->u.rotate.center_x = INT_TO_FIXED( FT_NEXT_SHORT( p ) );
         apaint->u.rotate.center_y = INT_TO_FIXED( FT_NEXT_SHORT( p ) );
       }
@@ -1102,6 +1156,7 @@
         FT_UInt  num_deltas = 0;
 
 
+        ENSURE_READ_BYTES( 4 );
         var_index_base = FT_NEXT_ULONG( p );
 
         if ( (FT_PaintFormat_Internal)apaint->format ==
@@ -1145,6 +1200,7 @@
       apaint->u.skew.paint.p                     = child_table_p;
       apaint->u.skew.paint.insert_root_transform = 0;
 
+      ENSURE_READ_BYTES( 4 );
       apaint->u.skew.x_skew_angle = F2DOT14_TO_FIXED( FT_NEXT_SHORT( p ) );
       apaint->u.skew.y_skew_angle = F2DOT14_TO_FIXED( FT_NEXT_SHORT( p ) );
 
@@ -1153,6 +1209,7 @@
            (FT_PaintFormat_Internal)apaint->format ==
              FT_COLR_PAINTFORMAT_INTERNAL_VAR_SKEW_CENTER )
       {
+        ENSURE_READ_BYTES( 4 );
         apaint->u.skew.center_x = INT_TO_FIXED( FT_NEXT_SHORT( p ) );
         apaint->u.skew.center_y = INT_TO_FIXED( FT_NEXT_SHORT( p ) );
       }
@@ -1170,6 +1227,7 @@
                FT_COLR_PAINTFORMAT_INTERNAL_VAR_SKEW_CENTER ) &&
            VARIABLE_COLRV1_ENABLED                            )
       {
+        ENSURE_READ_BYTES( 4 );
         var_index_base = FT_NEXT_ULONG( p );
 
         if ( (FT_PaintFormat_Internal)apaint->format ==
@@ -1211,6 +1269,7 @@
       apaint->u.composite.source_paint.p                     = child_table_p;
       apaint->u.composite.source_paint.insert_root_transform = 0;
 
+      ENSURE_READ_BYTES( 1 );
       composite_mode = FT_NEXT_BYTE( p );
       if ( composite_mode >= FT_COLR_COMPOSITE_MAX )
         return 0;
@@ -1506,13 +1565,6 @@
     p = iterator->p;
 
     /*
-     * First ensure that p is within COLRv1.
-     */
-    if ( p < colr->layers_v1                               ||
-         p >= ( (FT_Byte*)colr->table + colr->table_size ) )
-      return 0;
-
-    /*
      * Do a cursor sanity check of the iterator.  Counting backwards from
      * where it stands, we need to end up at a position after the beginning
      * of the `LayerV1List` table and not after the end of the
@@ -1526,6 +1578,14 @@
     if ( p_first_layer >= (FT_Byte*)(
            colr->layers_v1 + LAYER_V1_LIST_NUM_LAYERS_SIZE +
            colr->num_layers_v1 * LAYER_V1_LIST_PAINT_OFFSET_SIZE ) )
+      return 0;
+
+    /*
+     * Before reading, ensure that `p` is within 'COLR' v1 and we can read a
+     * 4-byte ULONG.
+     */
+    if ( p < colr->layers_v1                                  ||
+         p > ( (FT_Byte*)colr->table + colr->table_size - 4 ) )
       return 0;
 
     paint_offset =
@@ -1566,10 +1626,12 @@
     if ( iterator->current_color_stop >= iterator->num_color_stops )
       return 0;
 
+    /* Subtract 3 times 2 because we need to succeed in reading */
+    /* three 2-byte short values.                               */
     if ( iterator->p +
-           ( ( iterator->num_color_stops - iterator->current_color_stop ) *
-             COLOR_STOP_SIZE ) >
-         ( (FT_Byte *)colr->table + colr->table_size ) )
+           ( iterator->num_color_stops - iterator->current_color_stop ) *
+           COLOR_STOP_SIZE >
+         (FT_Byte*)colr->table + colr->table_size - 1 - 2 - 2 - 2 )
       return 0;
 
     /* Iterator points at first `ColorStop` of `ColorLine`. */
