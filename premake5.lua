@@ -22,8 +22,10 @@ project "FreeType"
 		"FT_CONFIG_OPTION_SYSTEM_ZLIB"
 	}
 
- 	filter "system:windows"
+	filter "action:vs*"
 		disablewarnings { "4244", "4267" }
+		
+	filter "system:windows"
 		defines { "_CRT_SECURE_NO_WARNINGS", "_CRT_NONSTDC_NO_DEPRECATE" }
 		files {
 			"./src/sdf/sdf.c",
@@ -67,22 +69,3 @@ project "FreeType"
 			"./src/base/fttype1.c",
 			"./src/base/ftwinfnt.c"
 		}
-
- 	filter "configurations:Debug"
-		defines { "MLE_DEBUG_BUILD", "DEBUG" }
-		runtime "Debug"
-		symbols "on"
-
-	filter "configurations:Release"
-		defines { "MLE_RELEASE_BUILD", "NDEBUG" }
-		flags { "LinkTimeOptimization" }
-		runtime "Release"
-		optimize "speed"
-		intrinsics "on"
-
-	filter "configurations:Distribution"
-		defines {  "MLE_DISTRIBUTION_BUILD", "NDEBUG" }
-		flags { "LinkTimeOptimization" }
-		runtime "Release"
-		optimize "speed"
-		intrinsics "on"
