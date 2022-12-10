@@ -22,7 +22,7 @@ project "FreeType"
 		"FT_CONFIG_OPTION_SYSTEM_ZLIB"
 	}
 
-	filter "action:vs*"
+	filter "toolset:msc"
 		disablewarnings { "4244", "4267" }
 		
 	filter "system:windows"
