@@ -13,7 +13,7 @@ project "FreeType"
 
 		"%{IncludeDir.zlib}",
 		"%{IncludeDir.freetype}",
-		"%{IncludeDir.fidelityfX_cacao}",
+		"%{IncludeDir.fidelityfx_cacao}",
 		"%{IncludeDir.general_includes}"
 	}
 
