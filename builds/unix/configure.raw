@@ -2,7 +2,7 @@
 #
 # Process this file with autoconf to produce a configure script.
 #
-# Copyright (C) 2001-2022 by
+# Copyright (C) 2001-2023 by
 # David Turner, Robert Wilhelm, and Werner Lemberg.
 #
 # This file is part of the FreeType project, and may only be used, modified,
@@ -161,9 +161,6 @@ if test -z "$FTSYS_SRC"; then
   FTSYS_SRC='$(BASE_DIR)/ftsystem.c'
 fi
 AC_SUBST([FTSYS_SRC])
-
-
-AC_CHECK_FUNCS([memcpy memmove])
 
 
 # get compiler flags right

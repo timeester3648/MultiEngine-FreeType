@@ -4,7 +4,7 @@
  *
  *   OpenType SVG Color (specification).
  *
- * Copyright (C) 2022 by
+ * Copyright (C) 2022-2023 by
  * David Turner, Robert Wilhelm, Werner Lemberg, and Moazin Khatti.
  *
  * This file is part of the FreeType project, and may only be used,
@@ -207,7 +207,7 @@
     FT_Error  error;
 
     Svg_doc  start_doc;
-    Svg_doc  mid_doc;
+    Svg_doc  mid_doc = { 0, 0, 0, 0 }; /* pacify compiler */
     Svg_doc  end_doc;
 
     FT_Bool  found = FALSE;
@@ -310,7 +310,8 @@
     if ( error != FT_Err_Ok )
       goto Exit;
 
-    doc_limit = svg->table_size - ( doc_list - (FT_Byte*)svg->table );
+    doc_limit = svg->table_size -
+                  (FT_ULong)( doc_list - (FT_Byte*)svg->table );
     if ( doc_offset > doc_limit              ||
          doc_length > doc_limit - doc_offset )
     {
