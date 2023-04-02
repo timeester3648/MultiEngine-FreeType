@@ -55,6 +55,7 @@ project "FreeType"
 		"./src",
 
 		"%{IncludeDir.zlib}",
+		"%{IncludeDir.brotli}",
 		"%{IncludeDir.freetype}",
 		"%{IncludeDir.harfbuzz}"
 	}
