@@ -618,24 +618,24 @@
   New_Profile( RAS_ARGS TStates  aState,
                         Bool     overshoot )
   {
-    if ( !ras.fProfile )
+    if ( !ras.cProfile || ras.cProfile->height )
     {
       ras.cProfile  = (PProfile)ras.top;
-      ras.fProfile  = ras.cProfile;
       ras.top      += AlignProfileSize;
-    }
 
-    if ( ras.top >= ras.maxBuff )
-    {
-      ras.error = FT_THROW( Raster_Overflow );
-      return FAILURE;
+      if ( ras.top >= ras.maxBuff )
+      {
+        FT_TRACE1(( "overflow in New_Profile\n" ));
+        ras.error = FT_THROW( Raster_Overflow );
+        return FAILURE;
+      }
     }
 
     ras.cProfile->start  = 0;
     ras.cProfile->height = 0;
     ras.cProfile->offset = ras.top;
-    ras.cProfile->link   = (PProfile)0;
-    ras.cProfile->next   = (PProfile)0;
+    ras.cProfile->link   = NULL;
+    ras.cProfile->next   = NULL;
     ras.cProfile->flags  = ras.dropOutControl;
 
     switch ( aState )
@@ -645,13 +645,13 @@
       if ( overshoot )
         ras.cProfile->flags |= Overshoot_Bottom;
 
-      FT_TRACE6(( "  new ascending profile = %p\n", (void *)ras.cProfile ));
+      FT_TRACE7(( "  new ascending profile = %p\n", (void *)ras.cProfile ));
       break;
 
     case Descending_State:
       if ( overshoot )
         ras.cProfile->flags |= Overshoot_Top;
-      FT_TRACE6(( "  new descending profile = %p\n", (void *)ras.cProfile ));
+      FT_TRACE7(( "  new descending profile = %p\n", (void *)ras.cProfile ));
       break;
 
     default:
@@ -704,10 +704,7 @@
 
     if ( h > 0 )
     {
-      PProfile  oldProfile;
-
-
-      FT_TRACE6(( "  ending profile %p, start = %ld, height = %ld\n",
+      FT_TRACE7(( "  ending profile %p, start = %ld, height = %ld\n",
                   (void *)ras.cProfile, ras.cProfile->start, h ));
 
       ras.cProfile->height = h;
@@ -719,23 +716,10 @@
           ras.cProfile->flags |= Overshoot_Bottom;
       }
 
-      oldProfile   = ras.cProfile;
-      ras.cProfile = (PProfile)ras.top;
+      /* premature, the last profile in the controur must loop */
+      ras.cProfile->next = (PProfile)ras.top;
 
-      ras.top += AlignProfileSize;
-
-      ras.cProfile->height = 0;
-      ras.cProfile->offset = ras.top;
-
-      oldProfile->next = ras.cProfile;
       ras.num_Profs++;
-    }
-
-    if ( ras.top >= ras.maxBuff )
-    {
-      FT_TRACE1(( "overflow in End_Profile\n" ));
-      ras.error = FT_THROW( Raster_Overflow );
-      return FAILURE;
     }
 
     ras.joint = FALSE;
@@ -1974,21 +1958,19 @@
 
 
     ras.fProfile = NULL;
+    ras.cProfile = NULL;
     ras.joint    = FALSE;
     ras.fresh    = FALSE;
 
-    ras.maxBuff  = ras.sizeBuff - AlignProfileSize;
+    ras.top      = ras.buff;
+    ras.maxBuff  = ras.sizeBuff;
 
-    ras.numTurns = 0;
-
-    ras.cProfile         = (PProfile)ras.top;
-    ras.cProfile->offset = ras.top;
-    ras.num_Profs        = 0;
+    ras.numTurns  = 0;
+    ras.num_Profs = 0;
 
     last = -1;
     for ( i = 0; i < ras.outline.n_contours; i++ )
     {
-      PProfile  lastProfile;
       Bool      o;
 
 
@@ -2001,18 +1983,19 @@
       if ( Decompose_Curve( RAS_VARS first, last, flipped ) )
         return FAILURE;
 
+      /* Note that ras.gProfile can stay nil if the contour was */
+      /* too small to be drawn or degenerate.                   */
+      if ( !ras.gProfile )
+        continue;
+
       /* we must now check whether the extreme arcs join or not */
       if ( FRAC( ras.lastY ) == 0 &&
            ras.lastY >= ras.minY  &&
            ras.lastY <= ras.maxY  )
-        if ( ras.gProfile                        &&
-             ( ras.gProfile->flags & Flow_Up ) ==
+        if ( ( ras.gProfile->flags & Flow_Up ) ==
                ( ras.cProfile->flags & Flow_Up ) )
           ras.top--;
-        /* Note that ras.gProfile can be nil if the contour was too small */
-        /* to be drawn.                                                   */
 
-      lastProfile = ras.cProfile;
       if ( ras.top != ras.cProfile->offset &&
            ( ras.cProfile->flags & Flow_Up ) )
         o = IS_TOP_OVERSHOOT( ras.lastY );
@@ -2021,9 +2004,11 @@
       if ( End_Profile( RAS_VARS o ) )
         return FAILURE;
 
-      /* close the `next profile in contour' linked list */
-      if ( ras.gProfile )
-        lastProfile->next = ras.gProfile;
+      /* loop the last profile in the contour */
+      ras.cProfile->next = ras.gProfile;
+
+      if ( !ras.fProfile )
+        ras.fProfile = ras.gProfile;
     }
 
     if ( Finalize_Profile_Table( RAS_VAR ) )
@@ -3024,8 +3009,6 @@
       ras.minY = (Long)y_min * ras.precision;
       ras.maxY = (Long)y_max * ras.precision;
 
-      ras.top = ras.buff;
-
       ras.error = Raster_Err_Ok;
 
       if ( Convert_Glyph( RAS_VARS flipped ) )
@@ -3038,6 +3021,9 @@
         if ( y_min == y_max )
           return ras.error;  /* still Raster_Overflow */
 
+        FT_TRACE6(( "band [%d..%d]: to be bisected\n",
+                    y_min, y_max ));
+
         y_mid = ( y_min + y_max ) >> 1;
 
         band_stack[band_top++] = y_min;
@@ -3045,6 +3031,10 @@
       }
       else
       {
+        FT_TRACE6(( "band [%d..%d]: %hd profiles; %td bytes remaining\n",
+                    y_min, y_max, ras.num_Profs,
+                    (char*)ras.maxBuff - (char*)ras.top ));
+
         if ( ras.fProfile )
           if ( Draw_Sweep( RAS_VAR ) )
              return ras.error;
@@ -3095,7 +3085,7 @@
     }
 
     /* Vertical Sweep */
-    FT_TRACE7(( "Vertical pass (ftraster)\n" ));
+    FT_TRACE6(( "Vertical pass (ftraster)\n" ));
 
     ras.Proc_Sweep_Init = Vertical_Sweep_Init;
     ras.Proc_Sweep_Span = Vertical_Sweep_Span;
@@ -3115,7 +3105,7 @@
     /* Horizontal Sweep */
     if ( !( ras.outline.flags & FT_OUTLINE_SINGLE_PASS ) )
     {
-      FT_TRACE7(( "Horizontal pass (ftraster)\n" ));
+      FT_TRACE6(( "Horizontal pass (ftraster)\n" ));
 
       ras.Proc_Sweep_Init = Horizontal_Sweep_Init;
       ras.Proc_Sweep_Span = Horizontal_Sweep_Span;
@@ -3165,9 +3155,12 @@
 
 
   static int
-  ft_black_new( FT_Memory       memory,
-                black_PRaster  *araster )
+  ft_black_new( void*       memory_,    /* FT_Memory     */
+                FT_Raster  *araster_ )  /* black_PRaster */
   {
+    FT_Memory       memory = (FT_Memory)memory_;
+    black_PRaster  *araster = (black_PRaster*)araster_;
+
     FT_Error       error;
     black_PRaster  raster = NULL;
 
@@ -3182,9 +3175,10 @@
 
 
   static void
-  ft_black_done( black_PRaster  raster )
+  ft_black_done( FT_Raster  raster_ )   /* black_PRaster */
   {
-    FT_Memory  memory = (FT_Memory)raster->memory;
+    black_PRaster  raster = (black_PRaster)raster_;
+    FT_Memory      memory = (FT_Memory)raster->memory;
 
 
     FT_FREE( raster );
@@ -3279,11 +3273,11 @@
 
     FT_GLYPH_FORMAT_OUTLINE,
 
-    (FT_Raster_New_Func)     ft_black_new,       /* raster_new      */
-    (FT_Raster_Reset_Func)   ft_black_reset,     /* raster_reset    */
-    (FT_Raster_Set_Mode_Func)ft_black_set_mode,  /* raster_set_mode */
-    (FT_Raster_Render_Func)  ft_black_render,    /* raster_render   */
-    (FT_Raster_Done_Func)    ft_black_done       /* raster_done     */
+    ft_black_new,       /* FT_Raster_New_Func      raster_new      */
+    ft_black_reset,     /* FT_Raster_Reset_Func    raster_reset    */
+    ft_black_set_mode,  /* FT_Raster_Set_Mode_Func raster_set_mode */
+    ft_black_render,    /* FT_Raster_Render_Func   raster_render   */
+    ft_black_done       /* FT_Raster_Done_Func     raster_done     */
   )
 
 
