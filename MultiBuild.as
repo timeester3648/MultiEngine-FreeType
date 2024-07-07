@@ -60,7 +60,7 @@ void main(MultiBuild::Workspace& workspace) {
 		"./src/winfonts/winfnt.c"
 	});
 
-	project.include_directories("./src");
+	properties.include_directories("./src");
 	project.defines("FT2_BUILD_LIBRARY");
 
 	{
