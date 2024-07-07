@@ -6,7 +6,7 @@ void main(MultiBuild::Workspace& workspace) {
 	properties.binary_object_kind(MultiBuild::BinaryObjectKind::eStaticLib);
 	project.license("./LICENSE.TXT");
 
-	project.project_includes({
+	properties.project_includes({
 		"zlib",
 		"brotli",
 		"HarfBuzz"
@@ -61,12 +61,12 @@ void main(MultiBuild::Workspace& workspace) {
 	});
 
 	properties.include_directories("./src");
-	project.defines("FT2_BUILD_LIBRARY");
+	properties.defines("FT2_BUILD_LIBRARY");
 
 	{
 		MultiBuild::ScopedFilter _(workspace, "config.platform:Windows");
 
-		project.defines({
+		properties.defines({
 			"_CRT_SECURE_NO_WARNINGS",
 			"_CRT_NONSTDC_NO_DEPRECATE"
 		});
