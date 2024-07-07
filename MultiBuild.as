@@ -2,7 +2,7 @@ void main(MultiBuild::Workspace& workspace) {
 	auto project = workspace.create_project(".");
 	auto properties = project.properties();
 
-	properties.name("FreeType");
+	project.name("FreeType");
 	properties.binary_object_kind(MultiBuild::BinaryObjectKind::eStaticLib);
 	project.license("./LICENSE.TXT");
 
