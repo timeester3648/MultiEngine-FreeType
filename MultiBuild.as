@@ -64,7 +64,7 @@ void main(MultiBuild::Workspace& workspace) {
 	properties.defines("FT2_BUILD_LIBRARY");
 
 	{
-		MultiBuild::ScopedFilter _(workspace, "config.platform:Windows");
+		MultiBuild::ScopedFilter _(project, "config.platform:Windows");
 
 		properties.defines({
 			"_CRT_SECURE_NO_WARNINGS",
@@ -78,7 +78,7 @@ void main(MultiBuild::Workspace& workspace) {
 	}
 
 	{
-		MultiBuild::ScopedFilter _(workspace, "!config.platform:Windows");
+		MultiBuild::ScopedFilter _(project, "!config.platform:Windows");
 
 		properties.files({
 			"./src/base/ftdebug.c",
