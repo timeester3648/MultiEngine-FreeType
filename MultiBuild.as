@@ -64,6 +64,11 @@ void main(MultiBuild::Workspace& workspace) {
 	properties.defines("FT2_BUILD_LIBRARY");
 
 	{
+		MultiBuild::ScopedFilter _(project, "project.compiler:VisualCpp");
+		properties.disable_warnings({ "4244", "4267" });
+	}
+
+	{
 		MultiBuild::ScopedFilter _(project, "config.platform:Windows");
 
 		properties.defines({
