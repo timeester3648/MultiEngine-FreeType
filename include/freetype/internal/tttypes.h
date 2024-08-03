@@ -5,7 +5,7 @@
  *   Basic SFNT/TrueType type definitions and interface (specification
  *   only).
  *
- * Copyright (C) 1996-2023 by
+ * Copyright (C) 1996-2024 by
  * David Turner, Robert Wilhelm, and Werner Lemberg.
  *
  * This file is part of the FreeType project, and may only be used,
@@ -1655,9 +1655,9 @@ FT_BEGIN_HEADER
   {
     FT_Memory   memory;
     FT_UShort   max_points;
-    FT_Short    max_contours;
+    FT_UShort   max_contours;
     FT_UShort   n_points;    /* number of points in zone    */
-    FT_Short    n_contours;  /* number of contours          */
+    FT_UShort   n_contours;  /* number of contours          */
 
     FT_Vector*  org;         /* original point coordinates  */
     FT_Vector*  cur;         /* current point coordinates   */
