@@ -43,6 +43,7 @@ void main(MultiBuild::Workspace& workspace) {
 		"./src/cff/cff.c",
 		"./src/cid/type1cid.c",
 		"./src/gzip/ftgzip.c",
+		"./src/hvf/hvf.c",
 		"./src/lzw/ftlzw.c",
 		"./src/pcf/pcf.c",
 		"./src/pfr/pfr.c",
