@@ -373,12 +373,9 @@
     FT_Long   version;
     FT_Long   axisCount;
     FT_ULong  table_len;
-
-#ifndef TT_CONFIG_OPTION_NO_BORING_EXPANSION
     FT_ULong  table_offset;
     FT_ULong  store_offset;
     FT_ULong  axisMap_offset;
-#endif
 
 
     FT_TRACE2(( "AVAR " ));
@@ -391,9 +388,7 @@
       return;
     }
 
-#ifndef TT_CONFIG_OPTION_NO_BORING_EXPANSION
     table_offset = FT_STREAM_POS();
-#endif
 
     if ( FT_FRAME_ENTER( table_len ) )
       return;
@@ -401,11 +396,8 @@
     version   = FT_GET_LONG();
     axisCount = FT_GET_LONG();
 
-    if ( version != 0x00010000L
-#ifndef TT_CONFIG_OPTION_NO_BORING_EXPANSION
-         && version != 0x00020000L
-#endif
-       )
+    if ( version != 0x00010000L &&
+         version != 0x00020000L )
     {
       FT_TRACE2(( "bad table version\n" ));
       goto Exit;
@@ -413,7 +405,7 @@
 
     FT_TRACE2(( "loaded\n" ));
 
-    if ( axisCount != (FT_Long)blend->mmvar->num_axis )
+    if ( axisCount != (FT_Long)blend->num_axis )
     {
       FT_TRACE2(( "ft_var_load_avar:"
                   " number of axes in `avar' and `fvar'\n" ));
@@ -462,7 +454,6 @@
       FT_TRACE5(( "\n" ));
     }
 
-#ifndef TT_CONFIG_OPTION_NO_BORING_EXPANSION
     if ( version < 0x00020000L )
       goto Exit;
 
@@ -490,7 +481,6 @@
       if ( error )
         goto Exit;
     }
-#endif
 
 
   Exit:
@@ -571,7 +561,7 @@
          FT_READ_USHORT( region_count ) )
       goto Exit;
 
-    if ( axis_count != (FT_Long)blend->mmvar->num_axis )
+    if ( axis_count != (FT_Long)blend->num_axis )
     {
       FT_TRACE2(( "tt_var_load_item_variation_store:"
                   " number of axes in item variation store\n" ));
@@ -1845,7 +1835,7 @@
     FT_UShort  axisCount;
     FT_UShort  globalCoordCount;
     FT_ULong   offsetToCoord;
-    FT_UShort  glyphCount;
+    FT_UInt32  glyphCount;
     FT_UShort  flags;
     FT_ULong   offsetToData;
 
@@ -1871,16 +1861,24 @@
   static FT_Error
   ft_var_load_gvar( TT_Face  face )
   {
-    FT_Stream     stream = FT_FACE_STREAM( face );
-    FT_Memory     memory = stream->memory;
-    GX_Blend      blend  = face->blend;
-    FT_Error      error;
-    FT_UInt       i, j;
-    FT_Byte*      bytes;
-    FT_ULong      table_len;
-    FT_ULong      gvar_start;
-    FT_ULong      offsetToData;
-    FT_ULong      offsets_len;
+    FT_Error  error;
+
+    FT_Stream  stream = FT_FACE_STREAM( face );
+    FT_Memory  memory = stream->memory;
+
+    GX_Blend  blend         = face->blend;
+    FT_Bool   blend_created = FALSE;
+    FT_Bool   is_extended   = FALSE;
+
+    FT_UInt   i, j;
+    FT_Byte*  bytes;
+    FT_ULong  table_len;
+    FT_ULong  gvar_start;
+    FT_ULong  header_size;
+
+    FT_ULong  offsetToData;
+    FT_ULong  offsets_len;
+
     GX_GVar_Head  gvar_head;
 
     static const FT_Frame_Field  gvar_fields[] =
@@ -1889,31 +1887,66 @@
 #undef  FT_STRUCTURE
 #define FT_STRUCTURE  GX_GVar_Head
 
-      FT_FRAME_START( 20 ),
+      FT_FRAME_START( 12 ),
         FT_FRAME_LONG  ( version ),
         FT_FRAME_USHORT( axisCount ),
         FT_FRAME_USHORT( globalCoordCount ),
         FT_FRAME_ULONG ( offsetToCoord ),
-        FT_FRAME_USHORT( glyphCount ),
-        FT_FRAME_USHORT( flags ),
-        FT_FRAME_ULONG ( offsetToData ),
       FT_FRAME_END
     };
 
 
     FT_TRACE2(( "GVAR " ));
 
-    if ( FT_SET_ERROR( face->goto_table( face,
-                                         TTAG_gvar,
-                                         stream,
-                                         &table_len ) ) )
+    error = face->goto_table( face,
+                              face->is_extended_glyf ? TTAG_GVAR
+                                                     : TTAG_gvar,
+                              stream,
+                              &table_len );
+    if ( FT_ERR_EQ( error, Table_Missing ) && !face->is_extended_glyf )
+    {
+      error = face->goto_table( face, TTAG_GVAR, stream, &table_len );
+      if ( !error )
+        is_extended = TRUE;
+    }
+    else if ( !error && face->is_extended_glyf )
+      is_extended = TRUE;
+
+    if ( error )
     {
       FT_TRACE2(( "is missing\n" ));
       goto Exit;
     }
 
+    header_size = is_extended ? 21 : 20;
+    if ( table_len < header_size )
+    {
+      error = FT_THROW( Invalid_Table );
+      goto Exit;
+    }
+
     gvar_start = FT_STREAM_POS( );
     if ( FT_STREAM_READ_FIELDS( gvar_fields, &gvar_head ) )
+      goto Exit;
+
+    if ( is_extended )
+    {
+      if ( FT_READ_UOFF3( gvar_head.glyphCount ) )
+        goto Exit;
+    }
+    else
+    {
+      FT_UShort  glyph_count;
+
+
+      if ( FT_READ_USHORT( glyph_count ) )
+        goto Exit;
+
+      gvar_head.glyphCount = glyph_count;
+    }
+
+    if ( FT_READ_USHORT( gvar_head.flags )       ||
+         FT_READ_ULONG( gvar_head.offsetToData ) )
       goto Exit;
 
     if ( gvar_head.version != 0x00010000L )
@@ -1923,7 +1956,25 @@
       goto Exit;
     }
 
-    if ( gvar_head.axisCount != (FT_UShort)blend->mmvar->num_axis )
+    /*
+     * VARC can use normalized coordinates for component-internal axes in a
+     * static font, where 'gvar' is present without 'fvar'.  Set up the
+     * private part of the blend machinery in that case; it deliberately has
+     * no `mmvar`, so the axes remain invisible through the public MM API.
+     */
+    if ( !blend )
+    {
+      if ( FT_SET_ERROR( tt_var_init_blend( FT_FACE( face ),
+                                            gvar_head.axisCount ) ) )
+        goto Exit;
+
+      blend         = face->blend;
+      blend_created = TRUE;
+    }
+
+    blend->gvar_is_extended = is_extended;
+
+    if ( gvar_head.axisCount != (FT_UShort)blend->num_axis )
     {
       FT_TRACE1(( "ft_var_load_gvar:"
                   " number of axes in `gvar' and `cvar'\n" ));
@@ -1948,7 +1999,7 @@
                   ( ( gvar_head.flags & 1 ) ? 4L : 2L );
 
     /* rough sanity check */
-    if (offsets_len > table_len )
+    if ( offsets_len > table_len - header_size )
     {
       FT_TRACE1(( "ft_var_load_gvar: invalid number of glyphs\n" ));
       error = FT_THROW( Invalid_Table );
@@ -2105,7 +2156,16 @@
       FT_FRAME_EXIT();
     }
 
+    if ( blend_created )
+    {
+      for ( i = 0; i < blend->tuplecount; i++ )
+        blend->tuplescalars[i] = (FT_Fixed)-0x20000L;
+    }
+
   Exit:
+    if ( error && blend_created )
+      tt_done_blend( FT_FACE( face ) );
+
     return error;
 
   Fail2:
@@ -2115,6 +2175,70 @@
     FT_FREE( blend->glyphoffsets );
     blend->gv_glyphcnt = 0;
     goto Exit;
+  }
+
+
+  /**************************************************************************
+   *
+   * @Function:
+   *   tt_var_init_gvar
+   *
+   * @Description:
+   *   Initialize the private 'gvar' blend state.  This also supports the
+   *   static-font case where VARC addresses component-internal axes and no
+   *   'fvar' table is present.
+   */
+  FT_LOCAL_DEF( FT_Error )
+  tt_var_init_gvar( FT_Face  face )
+  {
+    TT_Face  ttface = (TT_Face)face;
+
+
+    if ( ttface->blend && ttface->blend->glyphoffsets )
+      return FT_Err_Ok;
+
+    return ft_var_load_gvar( ttface );
+  }
+
+
+  /**************************************************************************
+   *
+   * @Function:
+   *   tt_var_init_blend
+   *
+   * @Description:
+   *   Initialize a private normalized-coordinate vector without 'fvar'.
+   *   CFF2 VARC glyphs use this with the axis count from their variation
+   *   store; TrueType VARC glyphs get the count from 'gvar' above.
+   */
+  FT_LOCAL_DEF( FT_Error )
+  tt_var_init_blend( FT_Face  face,
+                     FT_UInt  axis_count )
+  {
+    TT_Face    ttface = (TT_Face)face;
+    FT_Memory  memory = FT_FACE_MEMORY( face );
+    FT_Error   error  = FT_Err_Ok;
+    GX_Blend   blend  = ttface->blend;
+
+
+    if ( blend )
+      return blend->num_axis == axis_count
+               ? FT_Err_Ok
+               : FT_THROW( Invalid_Table );
+
+    if ( FT_NEW( blend ) )
+      return error;
+
+    blend->num_axis = axis_count;
+    ttface->blend   = blend;
+
+    if ( FT_NEW_ARRAY( blend->normalizedcoords, axis_count ) )
+    {
+      FT_FREE( blend );
+      ttface->blend = NULL;
+    }
+
+    return error;
   }
 
 
@@ -2605,6 +2729,11 @@
         FT_FRAME_USHORT( nameID ),
       FT_FRAME_END
     };
+
+    /* A static VARC face can have a private blend initialized from 'gvar' */
+    /* without exposing variation axes through the public MM API.          */
+    if ( ttface->blend && !ttface->blend->mmvar )
+      return FT_THROW( Table_Missing );
 
     /* `num_instances` holds the number of all named instances including  */
     /* the default instance, which might be missing in the table of named */
@@ -4431,8 +4560,15 @@
 
     /* each set of glyph variation data is formatted similarly to `cvar' */
 
+    if ( dataSize < ( blend->gvar_is_extended ? 5U : 4U ) )
+    {
+      error = FT_THROW( Invalid_Table );
+      goto FExit;
+    }
+
     tupleCount   = FT_GET_USHORT();
-    offsetToData = FT_GET_USHORT();
+    offsetToData = blend->gvar_is_extended ? FT_GET_UOFF3()
+                                           : FT_GET_USHORT();
 
     /* rough sanity test */
     if ( offsetToData > dataSize                                ||
@@ -5007,8 +5143,7 @@
       FT_UInt  i, num_axes;
 
 
-      /* blend->num_axis might not be set up yet */
-      num_axes = blend->mmvar->num_axis;
+      num_axes = blend->num_axis;
 
       FT_FREE( blend->coords );
       FT_FREE( blend->normalizedcoords );
@@ -5067,6 +5202,9 @@
       FT_FREE( blend->tuplecoords );
       FT_FREE( blend->glyphoffsets );
       FT_FREE( blend );
+
+      /* the face may outlive its blend (e.g., after a failed setup) */
+      ttface->blend = NULL;
     }
   }
 

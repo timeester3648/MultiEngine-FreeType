@@ -42,6 +42,10 @@
 #include <freetype/internal/services/svkern.h>
 #include <freetype/internal/services/svtteng.h>
 
+#ifdef TT_CONFIG_OPTION_VARC
+#include <freetype/internal/services/svvarc.h>
+#endif
+
 #include <freetype/ftdriver.h>
 
 #ifdef FT_CONFIG_OPTION_MAC_FONTS
@@ -788,7 +792,7 @@
 
     internal->transform_flags = 0;
 
-    if ( !matrix )
+    if ( !matrix || !FT_Matrix_Check( matrix ) )
     {
       internal->transform_matrix.xx = 0x10000L;
       internal->transform_matrix.xy = 0;
@@ -1016,6 +1020,22 @@
           autohint = TRUE;
       }
     }
+
+#ifdef TT_CONFIG_OPTION_VARC
+    /* Never auto-hint a VARC (variable composite) glyph: its components */
+    /* are already loaded unhinted, and the auto-fitter cannot process   */
+    /* the assembled composite (it also re-enters variation-coordinate   */
+    /* setting).  Use the native hinter / unhinted load instead.         */
+    if ( autohint && FT_IS_SFNT( face ) )
+    {
+      FT_Service_VARC  varc;
+
+
+      FT_FACE_FIND_SERVICE( face, varc, VARC );
+      if ( varc && varc->has_glyph( face, glyph_index ) )
+        autohint = FALSE;
+    }
+#endif
 
     if ( autohint )
     {
@@ -1441,8 +1461,14 @@
     {
       if ( cur[0]->encoding == FT_ENCODING_UNICODE )
       {
-        face->charmap = cur[0];
-        return FT_Err_Ok;
+        FT_Long  format = FT_Get_CMap_Format( cur[0] );
+
+
+        if ( format != 14 && format != 15 )
+        {
+          face->charmap = cur[0];
+          return FT_Err_Ok;
+        }
       }
     }
 
@@ -1457,7 +1483,7 @@
    *
    * @Description:
    *   This function finds the variant selector charmap, if there is one.
-   *   There can only be one (platform=0, specific=5, format=14).
+   *   There can only be one (platform=0, specific=5, format=14 or 15).
    */
   static FT_CharMap
   find_variant_selector_charmap( FT_Face  face )
@@ -1480,9 +1506,14 @@
     for ( cur = first; cur < end; cur++ )
     {
       if ( cur[0]->platform_id == TT_PLATFORM_APPLE_UNICODE    &&
-           cur[0]->encoding_id == TT_APPLE_ID_VARIANT_SELECTOR &&
-           FT_Get_CMap_Format( cur[0] ) == 14                  )
-        return cur[0];
+           cur[0]->encoding_id == TT_APPLE_ID_VARIANT_SELECTOR )
+      {
+        FT_Long  format = FT_Get_CMap_Format( cur[0] );
+
+
+        if ( format == 14 || format == 15 )
+          return cur[0];
+      }
     }
 
     return NULL;
@@ -3771,11 +3802,16 @@
 
     for ( ; cur < limit; cur++ )
     {
-      if ( cur[0] == charmap                    &&
-           FT_Get_CMap_Format ( charmap ) != 14 )
+      if ( cur[0] == charmap )
       {
-        face->charmap = cur[0];
-        return FT_Err_Ok;
+        FT_Long  format = FT_Get_CMap_Format( charmap );
+
+
+        if ( format != 14 && format != 15 )
+        {
+          face->charmap = cur[0];
+          return FT_Err_Ok;
+        }
       }
     }
 
@@ -4737,7 +4773,7 @@
     FT_Error     error = FT_Err_Ok;
     FT_Face      face  = slot->face;
     FT_Renderer  renderer;
-    FT_ListNode  node = NULL;
+    FT_ListNode  node  = NULL;
 
 
     /* try to render colored glyph layers as a special case */
@@ -4831,7 +4867,7 @@
            FT_ERR_NEQ( error, Cannot_Render_Glyph ) )
         break;
 
-      /* FT_Err_Cannot_Render_Glyph is returned if the render mode   */
+      /* `FT_Err_Cannot_Render_Glyph` is returned if the render mode */
       /* is unsupported by the current renderer for this glyph image */
       /* format.                                                     */
 

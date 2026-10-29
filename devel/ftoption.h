@@ -669,6 +669,7 @@ FT_BEGIN_HEADER
 #define TT_CONFIG_CMAP_FORMAT_12
 #define TT_CONFIG_CMAP_FORMAT_13
 #define TT_CONFIG_CMAP_FORMAT_14
+#define TT_CONFIG_CMAP_FORMAT_15
 
 
   /*************************************************************************/
@@ -758,20 +759,17 @@ FT_BEGIN_HEADER
 
   /**************************************************************************
    *
-   * Define `TT_CONFIG_OPTION_NO_BORING_EXPANSION` if you want to exclude
-   * support for 'boring' OpenType specification expansions.
+   * Define `TT_CONFIG_OPTION_VARC` if you want to include support for
+   * variable composite glyphs (the 'VARC' table).  This is part of the
+   * 'boring' OpenType specification expansions.
    *
-   *   https://github.com/harfbuzz/boring-expansion-spec
+   *   https://github.com/harfbuzz/boring-expansion-spec/blob/main/VARC.md
    *
-   * Right now, the following features are covered:
-   *
-   *   - 'avar' version 2.0
-   *
-   * Most likely, this is a temporary configuration option to be removed in
-   * the near future, since it is assumed that eventually those features are
-   * added to the OpenType standard.
+   * Variable composites enable more efficient encoding of variable glyphs
+   * by allowing glyphs to be composed from other glyphs with variable
+   * transformations and axis value overrides.
    */
-/* #define TT_CONFIG_OPTION_NO_BORING_EXPANSION */
+#define TT_CONFIG_OPTION_VARC
 
 
   /**************************************************************************
